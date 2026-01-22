@@ -25,7 +25,7 @@ class UserManager(BaseUserManager):
 
         user = self.model(email=self.normalize_email(email), **extra_fields)
         user.set_password(password)
-        user.save(using=self._db)   #triggers the object's save method
+        user.save(using=self._db)
 
         return user
 
@@ -53,6 +53,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
+    image_url = models.ImageField(upload_to='user_images/', blank=True, null=True)
     slug = models.SlugField(max_length=255, unique=True, blank=True)
 
     objects = UserManager()
@@ -90,18 +91,21 @@ class User(AbstractBaseUser, PermissionsMixin):
 class Genre(models.Model):
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True, max_length=50, blank=True)
+    is_approved = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
+        if self.name:
+            self.name = self.name.strip().title()
+            if not self.slug:
+                self.slug = slugify(self.name)
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.name
+        return self.name if self.is_approved else f"{self.name} (Pending)"
 
     class Meta:
         ordering = ['name']
-
 
 class Book(models.Model):
     title = models.CharField(max_length=255)
@@ -112,7 +116,6 @@ class Book(models.Model):
         if not self.slug:
             base_slug = slugify(f'{self.title} {self.author}')
 
-            # Collision-checking loop
             new_slug = base_slug
             counter = 1
             while Book.objects.filter(slug=new_slug).exists():

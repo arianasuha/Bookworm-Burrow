@@ -154,7 +154,7 @@ class ModelTests(TestCase):
             first_name='John',
             last_name='Doe'
         )
-        original_slug = user.slug # 'john-doe'
+        original_slug = user.slug
 
         user.first_name = 'Jane'
         user.save()
