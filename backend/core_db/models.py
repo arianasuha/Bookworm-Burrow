@@ -94,10 +94,9 @@ class Genre(models.Model):
     is_approved = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
-        if self.name:
+        if self.slug != slugify(self.name):
             self.name = self.name.strip().title()
-            if not self.slug:
-                self.slug = slugify(self.name)
+            self.slug = slugify(self.name)
 
         super().save(*args, **kwargs)
 
@@ -111,6 +110,15 @@ class Book(models.Model):
     title = models.CharField(max_length=255)
     author = models.CharField(max_length=150)
     slug = models.SlugField(unique=True, max_length=255, blank=True)
+
+    genres = models.ManyToManyField(
+        'Genre',
+        related_name='books',
+        blank=True
+    )
+
+    class Meta:
+        unique_together = ('title', 'author')
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -128,27 +136,11 @@ class Book(models.Model):
     def __str__(self):
         return f'{self.title} by {self.author}'
 
-    class Meta:
-        unique_together = ('title', 'author')
-
 
 class ReviewPost(models.Model):
-    reviewer = models.ForeignKey(
-        'User',
-        on_delete=models.CASCADE,
-    )
-
-    review_title = models.CharField(max_length=150)
-    book = models.ForeignKey(
-        'Book',
-        on_delete=models.CASCADE,
-        related_name='reviews',
-    )
-    reviewer_genres = models.ManyToManyField(
-        'Genre',
-        related_name='reviews_by_opinion',
-        blank=True,
-    )
+    reviewer = models.ForeignKey('User',on_delete=models.CASCADE)
+    review_title = models.CharField(max_length=150, blank=True, null=True)
+    book = models.ForeignKey('Book', on_delete=models.CASCADE, related_name='reviews')
     review_image = models.ImageField(
         upload_to='review_images/',
         blank=True,
@@ -164,61 +156,54 @@ class ReviewPost(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
-            base_slug = slugify(self.review_title)
+            # 1. Fallback logic: Use review_title OR book.title
+            title_to_slugify = self.review_title if self.review_title else f"Review of {self.book.title}"
+
+            base_slug = slugify(title_to_slugify)
             unique_slug_base = f'{base_slug}-by-{self.reviewer.slug}'
 
-            counter = 1
+            # 2. Collision detection
             final_slug = unique_slug_base
+            counter = 1
             while ReviewPost.objects.filter(slug=final_slug).exists():
                 final_slug = f'{unique_slug_base}-{counter}'
                 counter += 1
 
             self.slug = final_slug
+
         super().save(*args, **kwargs)
 
     class Meta:
         ordering = ['-review_date']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['reviewer', 'book'],
+                name='unique_review_per_user_per_book'
+            )
+        ]
 
 
-class Interaction(models.Model):
 
-    class InteractionTypes(models.TextChoices):   #python enum design
+class Reaction(models.Model):
+    class ReactionTypes(models.TextChoices):
         LOVE = 'LOVE', 'Love'
         LIKE = 'LIKE', 'Like'
-        COMMENT = 'COMMENT', 'Comment'
 
-    reader = models.ForeignKey(
-        'User',
-        on_delete=models.CASCADE,
-        related_name='interactions_given',
-    )
-    review_post = models.ForeignKey(
-        'ReviewPost',
-        on_delete=models.CASCADE,
-        related_name='interactions',
-    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    review_post = models.ForeignKey(ReviewPost, on_delete=models.CASCADE, related_name='reactions')
+    reaction_type = models.CharField(max_length=7, choices=ReactionTypes.choices)
 
-    #connection with the interaction_types class: the choice var tells
-    #When dealing with this field, only accept values from this list.
-    interaction_type = models.CharField(
-        max_length=7,
-        choices=InteractionTypes.choices,
-    )
+    class Meta:
+        # Crucial for APIs: prevents duplicate likes
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'review_post'], name='unique_user_reaction')
+        ]
 
-
-    content = models.TextField(
-        blank=True,
-        null=True,
-        help_text='Only required if the interaction type is COMMENT.'
-    )
-
+class Comment(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    review_post = models.ForeignKey(ReviewPost, on_delete=models.CASCADE, related_name='comments')
+    content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
-    is_active = models.BooleanField(default=True)
-
 
     class Meta:
         ordering = ['-created_at']
-
-
-    def __str__(self):
-        return f'{self.reader} {self.interaction_type}d on "{self.review_post.review_title}"'
